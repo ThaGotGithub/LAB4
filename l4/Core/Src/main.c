@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "arm_math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,13 +39,24 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 uint16_t position;
-float ang;
+uint16_t ang;
+int32_t temp=0;
+uint16_t ro =0;
+
+int16_t feedback=1;
+
+arm_pid_instance_f32 PID = {0};
+uint16_t setPosition=0;
+int16_t Duty=0;
+float kp=1;
+float ki=0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -53,8 +64,11 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 float Position_Motor(uint16_t pos);
+uint16_t PositionMotor(uint16_t pos);
+uint16_t ControlSpeed(int16_t fb);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -92,8 +106,18 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_TIM3_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Encoder_Start(&htim3,TIM_CHANNEL_1|TIM_CHANNEL_2);
+  HAL_TIM_Base_Start_IT(&htim3);
+
+  HAL_TIM_Base_Start(&htim2);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+ // HAL_TIM_Encoder_Start_IT(&htim3,TIM_CHANNEL_1|TIM_CHANNEL_2);
+  PID.Kp = kp;
+  PID.Ki = ki;
+  arm_pid_init_f32(&PID,0);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -103,10 +127,27 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 		static uint32_t timestamp = 0;
+		//Use Timer Intterupt
 		if (HAL_GetTick() > timestamp) {
-			timestamp = HAL_GetTick() + 50;
+			timestamp = HAL_GetTick() + 5;
 			position = __HAL_TIM_GET_COUNTER(&htim3);
-			ang = Position_Motor(position);
+			//ang = Position_Motor(position);
+			ang=PositionMotor(position);
+			feedback=arm_pid_f32(&PID, setPosition-ang);
+			ro=ang/360;
+			if(feedback>0){
+				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, ControlSpeed(feedback));
+				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+			}
+			else if(feedback<0) {
+				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, ControlSpeed(feedback*-1));
+				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+			}
+			else {
+				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+			}
+
 		}
 	}
   /* USER CODE END 3 */
@@ -159,6 +200,59 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 83;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
@@ -179,7 +273,7 @@ static void MX_TIM3_Init(void)
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 0;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 3071;
+  htim3.Init.Period = 64511;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
@@ -275,7 +369,29 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 float Position_Motor(uint16_t pos){
-	return (pos/3071.0)*360.0;
+	static uint16_t last_pos=0;
+	if((pos-last_pos)<0&&feedback>=0)temp+=7560;
+	if((pos-last_pos)>10000&&feedback<0)temp-=7560;
+	//else if((pos-last_pos)>=1000) temp-=7560;
+	ang=((pos/(3071.0*21))*(360.0*21))+temp;
+	last_pos=pos;
+	return ang;
+}
+uint16_t PositionMotor(uint16_t pos){
+	return ((pos/(3071.0*21))*(360.0*21))+temp;
+}
+uint16_t ControlSpeed(int16_t fb){
+	static uint16_t speed;
+	if(fb<100) return 50;
+	else return fb;
+
+}
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if(htim==&htim3&&ang!=0){
+		if(feedback>=0) temp+=7560;
+		else temp-=7560;
+	}
 }
 /* USER CODE END 4 */
 

@@ -57,6 +57,7 @@ uint16_t setPosition=0;
 int16_t Duty=0;
 float kp=1;
 float ki=0;
+float gain =1.5;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -133,7 +134,7 @@ int main(void)
 			position = __HAL_TIM_GET_COUNTER(&htim3);
 			//ang = Position_Motor(position);
 			ang=PositionMotor(position);
-			feedback=arm_pid_f32(&PID, setPosition-ang);
+			feedback=(arm_pid_f32(&PID, setPosition-ang))*gain;
 			ro=ang/360;
 			if(feedback>0){
 				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, ControlSpeed(feedback));
